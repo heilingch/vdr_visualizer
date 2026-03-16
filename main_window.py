@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
         self.spin_refresh.setRange(1, 300)
         self.spin_refresh.setValue(10)
         self.spin_refresh.setSuffix(" s")
+        self.spin_refresh.valueChanged.connect(self._on_refresh_interval_changed)
         rl.addWidget(self.spin_refresh)
         fl.addLayout(rl)
         layout.addWidget(grp_file)
@@ -422,8 +423,9 @@ class MainWindow(QMainWindow):
         self._set_checked_vars(vars_for)
 
     # ── Auto-refresh ──────────────────────────────────────────
-    def _toggle_autorefresh(self, state):
-        if state == Qt.CheckState.Checked.value:
+    def _toggle_autorefresh(self, state: int):
+        # stateChanged emits an integer (0 = Unchecked, 2 = Checked)
+        if state == 2:  # Qt.CheckState.Checked.value
             ms = self.spin_refresh.value() * 1000
             self.refresh_timer.start(ms)
             self.status.showMessage(
@@ -432,6 +434,11 @@ class MainWindow(QMainWindow):
         else:
             self.refresh_timer.stop()
             self.status.showMessage("Auto-refresh disabled")
+            
+    def _on_refresh_interval_changed(self, val: int):
+        if self.refresh_timer.isActive():
+            self.refresh_timer.setInterval(val * 1000)
+            self.status.showMessage(f"Auto-refresh updated ({val}s)")
 
     # ── Grid / plot management ────────────────────────────────
     def update_grid(self):
