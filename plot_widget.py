@@ -113,12 +113,24 @@ class PlotWidget(QWidget):
         )
         header_layout.addWidget(self.title_label)
         
-        # Zoom to Fit button
-        self.btn_fit = QPushButton("⛶ Fit")
-        self.btn_fit.setFixedSize(50, 20)
-        self.btn_fit.setStyleSheet(
-            f"background: #0f3460; color: {FG_TEXT}; border: 1px solid #2a4a7f; border-radius: 2px; font-size: 10px;"
-        )
+        # Zoom to Fit buttons
+        btn_style = f"background: #0f3460; color: {FG_TEXT}; border: 1px solid #2a4a7f; border-radius: 2px; font-size: 10px;"
+        
+        self.btn_fit_x = QPushButton("⛶ Fit X")
+        self.btn_fit_x.setFixedSize(50, 20)
+        self.btn_fit_x.setStyleSheet(btn_style)
+        self.btn_fit_x.clicked.connect(lambda: self.pg_widget.enableAutoRange(axis=pg.ViewBox.XAxis))
+        header_layout.addWidget(self.btn_fit_x)
+        
+        self.btn_fit_y = QPushButton("⛶ Fit Y")
+        self.btn_fit_y.setFixedSize(50, 20)
+        self.btn_fit_y.setStyleSheet(btn_style)
+        self.btn_fit_y.clicked.connect(lambda: self.pg_widget.enableAutoRange(axis=pg.ViewBox.YAxis))
+        header_layout.addWidget(self.btn_fit_y)
+
+        self.btn_fit = QPushButton("⛶ Fit All")
+        self.btn_fit.setFixedSize(55, 20)
+        self.btn_fit.setStyleSheet(btn_style)
         self.btn_fit.clicked.connect(self._auto_range)
         header_layout.addWidget(self.btn_fit)
         

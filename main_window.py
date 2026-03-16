@@ -161,6 +161,12 @@ class MainWindow(QMainWindow):
         self.combo_downsample.currentTextChanged.connect(self.update_all_plots)
         flt.addWidget(self.combo_downsample)
 
+        flt.addWidget(QLabel("Moving Average:"))
+        self.combo_ma = QComboBox()
+        self.combo_ma.addItems(["None", "5 points", "10 points", "20 points", "50 points"])
+        self.combo_ma.currentTextChanged.connect(self.update_all_plots)
+        flt.addWidget(self.combo_ma)
+
         flt.addWidget(QLabel("Time range (last N hours, 0 = all):"))
         self.spin_hours = QDoubleSpinBox()
         self.spin_hours.setRange(0, 720)
@@ -469,11 +475,15 @@ class MainWindow(QMainWindow):
         ds = self.combo_downsample.currentText()
         downsample = None if ds == "None" else ds
         hours = self.spin_hours.value()
+        
+        ma_str = self.combo_ma.currentText()
+        ma_window = None if ma_str == "None" else int(ma_str.split(' ')[0])
 
         df = self.model.get_data(
             varlist,
             time_range_hours=hours if hours > 0 else None,
             downsample_str=downsample,
+            moving_average_window=ma_window
         )
 
         pw.plot_data(df)

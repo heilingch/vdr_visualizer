@@ -347,7 +347,10 @@ class VDRParser:
                     elif 'heave' in name_lower:
                         data['Heave'] = fval
                     elif 'baro' in name_lower or t_type == 'P':
-                        data['Pressure'] = fval
+                        if getattr(t_unit, 'upper', lambda: '')() == 'B' or fval < 10.0:
+                            data['Pressure'] = fval * 1000.0
+                        else:
+                            data['Pressure'] = fval
                     elif 'temp' in name_lower or t_type == 'C':
                         data['Air_Temp'] = fval
                     elif 'humid' in name_lower:

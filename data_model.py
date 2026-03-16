@@ -32,6 +32,7 @@ class VDRDataModel:
         variables: List[str],
         time_range_hours: Optional[float] = None,
         downsample_str: Optional[str] = None,
+        moving_average_window: Optional[int] = None,
     ) -> pd.DataFrame:
         """
         Retrieve data for specific variables, optionally filtered by time
@@ -55,6 +56,10 @@ class VDRDataModel:
         # Downsample
         if downsample_str:
             df = df.resample(downsample_str).mean()
+            
+        # Moving Average
+        if moving_average_window is not None and moving_average_window > 1:
+            df = df.rolling(window=moving_average_window, min_periods=1).mean()
 
         # Drop rows where ALL selected variables are NaN
         df = df.dropna(how='all')
