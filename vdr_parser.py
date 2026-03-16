@@ -75,9 +75,11 @@ class VDRParser:
                     logging.error(f"Unknown CSV format in {filepath}. Found columns: {cols}")
                     return pd.DataFrame()
 
-                for _, row in df_raw.iterrows():
-                    timestamp_val = row.get(time_col)
-                    sentence = str(row.get(data_col, ""))
+                # Extract columns as numpy arrays/lists for fast iteration
+                timestamps = df_raw[time_col].values
+                sentences = df_raw[data_col].values
+                for timestamp_val, sentence_val in zip(timestamps, sentences):
+                    sentence = str(sentence_val)
                     
                     # Clean up escape characters if present
                     sentence = sentence.replace('<0D><0A>', '').replace('\r', '').replace('\n', '').strip()

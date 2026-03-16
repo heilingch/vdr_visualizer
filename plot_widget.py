@@ -9,7 +9,7 @@ import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGridLayout,
-    QHBoxLayout, QLabel
+    QHBoxLayout, QLabel, QPushButton
 )
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Signal, Qt
@@ -80,7 +80,7 @@ class TimeAxisItem(pg.AxisItem):
         result = []
         for val in values:
             try:
-                result.append(_time.strftime("%H:%M:%S", _time.localtime(val)))
+                result.append(_time.strftime("%H:%M:%S", _time.gmtime(val)))
             except (OSError, OverflowError, ValueError):
                 result.append("")
         return result
@@ -101,13 +101,29 @@ class PlotWidget(QWidget):
         self._main_layout.setContentsMargins(2, 2, 2, 2)
         self._main_layout.setSpacing(0)
 
+        # Header layout for title and controls
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        
         # Title label
         self.title_label = QLabel("No data")
         self.title_label.setStyleSheet(
             f"font-weight: bold; padding: 3px 6px; color: {FG_TEXT}; "
             f"background: {BG_DARK}; font-size: 12px;"
         )
-        self._main_layout.addWidget(self.title_label)
+        header_layout.addWidget(self.title_label)
+        
+        # Zoom to Fit button
+        self.btn_fit = QPushButton("⛶ Fit")
+        self.btn_fit.setFixedSize(50, 20)
+        self.btn_fit.setStyleSheet(
+            f"background: #0f3460; color: {FG_TEXT}; border: 1px solid #2a4a7f; border-radius: 2px; font-size: 10px;"
+        )
+        self.btn_fit.clicked.connect(self._auto_range)
+        header_layout.addWidget(self.btn_fit)
+        
+        header_layout.addStretch()
+        self._main_layout.addLayout(header_layout)
 
         # pyqtgraph plot with time axis (dark themed)
         self.time_axis = TimeAxisItem(orientation='bottom')
@@ -194,6 +210,10 @@ class PlotWidget(QWidget):
         self.hLine.hide()
         self._is_source = False
         self._update_value_readout(x_val)
+
+    def _auto_range(self):
+        """Reset the plot view to fit all data."""
+        self.pg_widget.enableAutoRange(axis=pg.ViewBox.XYAxes)
 
     def _update_value_readout(self, x_epoch: float):
         """Look up nearest data values at the given unix timestamp and display."""
