@@ -68,6 +68,19 @@ THEMES = {
             '#00D4FF', '#FF6B6B', '#51CF66', '#FFD43B', '#CC5DE8',
             '#FF922B', '#20C997', '#F06595', '#74C0FC', '#A9E34B'
         ]
+    ),
+    "Night Mode": Theme(
+        name="Night Mode",
+        bg_app="#1a0a0a",
+        bg_plot="#120505",
+        fg_text="#eed4d4",
+        fg_dim="#522d2d",
+        grid=(90, 50, 50, 100),
+        crosshair="#cc8888",
+        curves=[
+            '#00D4FF', '#FF6B6B', '#51CF66', '#FFD43B', '#CC5DE8',
+            '#FF922B', '#20C997', '#F06595', '#74C0FC', '#A9E34B'
+        ]
     )
 }
 
