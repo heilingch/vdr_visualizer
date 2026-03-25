@@ -10,13 +10,14 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QCheckBox, QSpinBox, QMessageBox,
     QGroupBox, QSplitter, QStatusBar, QDoubleSpinBox
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QAction
+from PySide6.QtCore import Qt, QTimer, QSettings
+from PySide6.QtGui import QFont, QAction, QActionGroup
 import pyqtgraph as pg
 
 from data_model import VDRDataModel
 from plot_widget import PlotCanvas
 from vdr_parser import VARIABLE_CATEGORIES, get_category
+from theme import get_theme, THEMES
 
 
 class MainWindow(QMainWindow):
@@ -28,9 +29,40 @@ class MainWindow(QMainWindow):
         self.model = VDRDataModel()
         self.current_files: List[str] = []
 
+        self.settings = QSettings("VDRVisualizer", "OpenCPN")
+        self.current_theme_name = self.settings.value("theme", "Dark")
+        self.theme = get_theme(self.current_theme_name)
+
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.setCentralWidget(self.splitter)
+
+        self._build_menu()
+        self._build_config_panel()
+        self._build_status_bar()
+        self._apply_style()
+
         # Central canvas
         self.canvas = PlotCanvas()
-        self.setCentralWidget(self.canvas)
+        self.canvas.set_theme(self.theme)
+        
+        self.splitter.addWidget(self.config_panel)
+        self.splitter.addWidget(self.canvas)
+        self.splitter.setSizes([320, 1080])
+
+        # Setup collapsible handle over the splitter
+        self.splitter.setHandleWidth(14)
+        handle = self.splitter.handle(1)
+        # Handle layout to center the button vertically
+        h_layout = QVBoxLayout(handle)
+        h_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.setAlignment(Qt.AlignCenter)
+        
+        self.btn_collapse = QPushButton("◀")
+        self.btn_collapse.setObjectName("CollapseBtn")
+        self.btn_collapse.setFixedSize(14, 40)
+        self.btn_collapse.setCursor(Qt.PointingHandCursor)
+        self.btn_collapse.clicked.connect(self._toggle_config_panel)
+        h_layout.addWidget(self.btn_collapse)
 
         # Auto-refresh timer
         self.refresh_timer = QTimer(self)
@@ -38,11 +70,10 @@ class MainWindow(QMainWindow):
 
         # Per-plot variable selections  {plot_index: [var_names]}
         self.plot_variables: Dict[int, List[str]] = {}
-
-        self._build_menu()
-        self._build_config_dock()
-        self._build_status_bar()
-        self._apply_style()
+        # Per-plot orientations {plot_index: 'horizontal' | 'vertical'}
+        self.plot_orientations: Dict[int, str] = {}
+        # Per-plot newest top tracking {plot_index: bool}
+        self.plot_newest_top: Dict[int, bool] = {}
 
         self.update_grid()
 
@@ -56,6 +87,18 @@ class MainWindow(QMainWindow):
         act_open.triggered.connect(self.load_files_dialog)
         file_menu.addAction(act_open)
 
+        theme_menu = file_menu.addMenu("&Theme")
+        self.theme_group = QActionGroup(self)
+        for t_name in THEMES:
+            act = QAction(t_name, self, checkable=True)
+            if t_name == self.current_theme_name:
+                act.setChecked(True)
+            act.triggered.connect(lambda checked, name=t_name: self.change_theme(name))
+            self.theme_group.addAction(act)
+            theme_menu.addAction(act)
+
+        file_menu.addSeparator()
+
         act_quit = QAction("&Quit", self)
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
@@ -67,17 +110,21 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
         self.status.showMessage("Ready – load a VDR file to begin.")
 
-    # ── Configuration Dock ────────────────────────────────────
-    def _build_config_dock(self):
-        dock = QDockWidget("Configuration", self)
-        dock.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea
-            | Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        dock.setMinimumWidth(280)
-
-        scroll = QWidget()
-        layout = QVBoxLayout(scroll)
+    # ── Configuration Panel ───────────────────────────────────
+    def _build_config_panel(self):
+        self.config_panel = QWidget()
+        self.config_panel.setMinimumWidth(280)
+        
+        main_vl = QVBoxLayout(self.config_panel)
+        main_vl.setContentsMargins(0, 0, 0, 0)
+        main_vl.setSpacing(0)
+        
+        title = QLabel("Configuration")
+        title.setObjectName("ConfigTitle")
+        main_vl.addWidget(title)
+        
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setSpacing(6)
 
         # ── File Section ──
@@ -137,6 +184,15 @@ class MainWindow(QMainWindow):
         self.plot_selector = QComboBox()
         self.plot_selector.currentIndexChanged.connect(self._on_plot_selector_changed)
         vl.addWidget(self.plot_selector)
+        
+        self.chk_vertical = QCheckBox("Vertical Plot (Time on Y-Axis)")
+        self.chk_vertical.stateChanged.connect(self._on_vertical_changed)
+        vl.addWidget(self.chk_vertical)
+
+        self.chk_newest_top = QCheckBox("↳ Newest Data on Top")
+        self.chk_newest_top.stateChanged.connect(self._on_vertical_changed)
+        self.chk_newest_top.setStyleSheet("margin-left: 15px;")
+        vl.addWidget(self.chk_newest_top)
 
         vl.addWidget(QLabel("Select variables (by category):"))
 
@@ -163,7 +219,7 @@ class MainWindow(QMainWindow):
 
         flt.addWidget(QLabel("Moving Average:"))
         self.combo_ma = QComboBox()
-        self.combo_ma.addItems(["None", "5 points", "10 points", "20 points", "50 points"])
+        self.combo_ma.addItems(["None"] + [f"{2**i} points" for i in range(1, 10)])
         self.combo_ma.currentTextChanged.connect(self.update_all_plots)
         flt.addWidget(self.combo_ma)
 
@@ -180,147 +236,192 @@ class MainWindow(QMainWindow):
         layout.addWidget(grp_filter)
 
         layout.addStretch()
+        
+        main_vl.addWidget(scroll_content)
 
-        dock.setWidget(scroll)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+    def _toggle_config_panel(self):
+        sizes = self.splitter.sizes()
+        if sizes[0] > 0:
+            self._last_config_width = sizes[0]
+            # Must drop minimum width to 0 to allow compression
+            self.config_panel.setMinimumWidth(0)
+            self.splitter.setSizes([0, sizes[0] + sizes[1]])
+            self.btn_collapse.setText("▶")
+        else:
+            restore_w = getattr(self, '_last_config_width', 280)
+            self.config_panel.setMinimumWidth(280)
+            self.splitter.setSizes([restore_w, sizes[1] - restore_w])
+            self.btn_collapse.setText("◀")
 
-    # ── Styling — Dark Sailing Theme ─────────────────────────
+    # ── Styling — Dynamic Theme ──────────────────────────────
     def _apply_style(self):
-        self.setStyleSheet("""
-            * { color: #e0e0e0; }
-            QMainWindow { background: #1a1a2e; }
-            QDockWidget {
+        c_bg_app = self.theme.bg_app
+        c_bg_plot = self.theme.bg_plot
+        c_fg_text = self.theme.fg_text
+        c_fg_dim = self.theme.fg_dim
+        # Pick primary color from the theme's curve colors, or fallback to a vibrant option
+        c_accent = self.theme.curves[0] if self.theme.curves else "#00D4FF"
+
+        # Tweak some specific borders slightly lighter than backgrounds for contrast
+        # Since we just have raw hexes, we will use fg_dim or bg_plot for borders
+        
+        self.setStyleSheet(f"""
+            * {{ color: {c_fg_text}; }}
+            QMainWindow {{ background: {c_bg_app}; }}
+            QSplitter::handle {{
+                background: {c_bg_app};
+            }}
+            QPushButton#CollapseBtn {{
+                background: {c_bg_plot};
+                color: {c_fg_text};
+                border: 1px solid {c_fg_dim};
+                border-radius: 3px;
                 font-weight: bold;
-                background: #1a1a2e;
-                color: #e0e0e0;
-                titlebar-close-icon: none;
-            }
-            QDockWidget::title {
-                background: #0f3460;
+                font-size: 10px;
+                padding: 0px;
+            }}
+            QPushButton#CollapseBtn:hover {{
+                background: {c_fg_dim};
+                color: {c_accent};
+            }}
+            QLabel#ConfigTitle {{
+                background: {c_bg_plot};
+                color: {c_fg_text};
+                font-weight: bold;
                 padding: 6px;
-            }
-            QWidget { background: #1a1a2e; }
-            QGroupBox {
+                font-size: 13px;
+            }}
+            QWidget {{ background: {c_bg_app}; }}
+            QGroupBox {{
                 font-weight: bold;
-                color: #00D4FF;
-                border: 1px solid #2a4a7f;
+                color: {c_accent};
+                border: 1px solid {c_fg_dim};
                 border-radius: 4px;
                 margin-top: 10px;
                 padding-top: 16px;
-                background: #16213e;
-            }
-            QGroupBox::title {
+                background: {c_bg_plot};
+            }}
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 6px;
-                color: #00D4FF;
-            }
-            QPushButton {
+                color: {c_accent};
+            }}
+            QPushButton {{
                 padding: 6px 14px;
-                border: 1px solid #2a4a7f;
+                border: 1px solid {c_fg_dim};
                 border-radius: 4px;
-                background: #0f3460;
-                color: #e0e0e0;
+                background: {c_bg_plot};
+                color: {c_fg_text};
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #1a4a8f;
-                border-color: #00D4FF;
-            }
-            QPushButton:pressed { background: #0a2a50; }
-            QLabel { color: #c0c8d4; background: transparent; }
-            QComboBox {
-                background: #16213e;
-                border: 1px solid #2a4a7f;
+            }}
+            QPushButton:hover {{
+                border-color: {c_accent};
+            }}
+            QPushButton:pressed {{ background: {c_bg_app}; }}
+            QLabel {{ color: {c_fg_text}; background: transparent; }}
+            QComboBox {{
+                background: {c_bg_plot};
+                border: 1px solid {c_fg_dim};
                 border-radius: 3px;
                 padding: 4px 8px;
-                color: #e0e0e0;
-            }
-            QComboBox::drop-down {
+                color: {c_fg_text};
+            }}
+            QComboBox::drop-down {{
                 border: none;
-                background: #0f3460;
-            }
-            QComboBox QAbstractItemView {
-                background: #16213e;
-                color: #e0e0e0;
-                selection-background-color: #0f3460;
-            }
-            QSpinBox, QDoubleSpinBox {
-                background: #16213e;
-                border: 1px solid #2a4a7f;
+                background: {c_bg_plot};
+            }}
+            QComboBox QAbstractItemView {{
+                background: {c_bg_plot};
+                color: {c_fg_text};
+                selection-background-color: {c_fg_dim};
+            }}
+            QSpinBox, QDoubleSpinBox {{
+                background: {c_bg_plot};
+                border: 1px solid {c_fg_dim};
                 border-radius: 3px;
                 padding: 3px 6px;
-                color: #e0e0e0;
-            }
-            QCheckBox { color: #c0c8d4; background: transparent; }
-            QCheckBox::indicator {
-                border: 1px solid #2a4a7f;
-                background: #16213e;
+                color: {c_fg_text};
+            }}
+            QCheckBox {{ color: {c_fg_text}; background: transparent; }}
+            QCheckBox::indicator {{
+                border: 1px solid {c_fg_dim};
+                background: {c_bg_plot};
                 width: 14px; height: 14px;
-            }
-            QCheckBox::indicator:checked {
-                background: #00D4FF;
-                border-color: #00D4FF;
-            }
-            QTreeWidget {
+            }}
+            QCheckBox::indicator:checked {{
+                background: {c_accent};
+                border-color: {c_accent};
+            }}
+            QTreeWidget {{
                 font-size: 12px;
-                background: #16213e;
-                border: 1px solid #2a4a7f;
-                color: #e0e0e0;
-                alternate-background-color: #1a2744;
-            }
-            QTreeWidget::item { padding: 2px 0; }
-            QTreeWidget::item:selected {
-                background: #0f3460;
-                color: #00D4FF;
-            }
-            QTreeWidget::indicator {
-                border: 1px solid #2a4a7f;
-                background: #16213e;
-            }
-            QTreeWidget::indicator:checked {
-                background: #00D4FF;
-                border-color: #00D4FF;
-            }
-            QHeaderView::section {
-                background: #0f3460;
-                color: #e0e0e0;
+                background: {c_bg_plot};
+                border: 1px solid {c_fg_dim};
+                color: {c_fg_text};
+                alternate-background-color: {c_bg_app};
+            }}
+            QTreeWidget::item {{ padding: 2px 0; }}
+            QTreeWidget::item:selected {{
+                background: {c_bg_plot};
+                color: {c_accent};
+            }}
+            QTreeWidget::indicator {{
+                border: 1px solid {c_fg_dim};
+                background: {c_bg_plot};
+            }}
+            QTreeWidget::indicator:checked {{
+                background: {c_accent};
+                border-color: {c_accent};
+            }}
+            QHeaderView::section {{
+                background: {c_bg_plot};
+                color: {c_fg_text};
                 border: none;
                 padding: 4px;
-            }
-            QMenuBar {
-                background: #0f3460;
-                color: #e0e0e0;
-            }
-            QMenuBar::item:selected { background: #1a4a8f; }
-            QMenu {
-                background: #16213e;
-                color: #e0e0e0;
-                border: 1px solid #2a4a7f;
-            }
-            QMenu::item:selected { background: #0f3460; }
-            QStatusBar {
-                background: #0f3460;
-                color: #8899aa;
-            }
-            QScrollBar:vertical {
-                background: #1a1a2e;
+            }}
+            QMenuBar {{
+                background: {c_bg_plot};
+                color: {c_fg_text};
+            }}
+            QMenuBar::item:selected {{ background: {c_fg_dim}; }}
+            QMenu {{
+                background: {c_bg_plot};
+                color: {c_fg_text};
+                border: 1px solid {c_fg_dim};
+            }}
+            QMenu::item:selected {{ background: {c_bg_app}; }}
+            QStatusBar {{
+                background: {c_bg_plot};
+                color: {c_fg_dim};
+            }}
+            QScrollBar:vertical {{
+                background: {c_bg_app};
                 width: 10px;
-            }
-            QScrollBar::handle:vertical {
-                background: #2a4a7f;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {c_fg_dim};
                 border-radius: 4px;
                 min-height: 20px;
-            }
+            }}
         """)
+
+    def change_theme(self, theme_name: str):
+        self.current_theme_name = theme_name
+        self.settings.setValue("theme", theme_name)
+        self.theme = get_theme(theme_name)
+        self._apply_style()
+        self.canvas.set_theme(self.theme)
+        self.update_all_plots()
 
     # ── File Loading ──────────────────────────────────────────
     def load_files_dialog(self):
+        last_dir = self.settings.value("last_dir", "")
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select VDR Files", "",
+            self, "Select VDR Files", last_dir,
             "VDR Files (*.vdr *.txt *.csv);;All Files (*)"
         )
         if files:
+            self.settings.setValue("last_dir", os.path.dirname(files[0]))
             self.current_files = list(files)
             names = [os.path.basename(f) for f in files]
             self.lbl_files.setText(
@@ -425,8 +526,45 @@ class MainWindow(QMainWindow):
         idx = self.plot_selector.currentIndex()
         if idx < 0:
             return
+            
+        self.chk_vertical.blockSignals(True)
+        self.chk_newest_top.blockSignals(True)
+        
+        is_vert = (self.plot_orientations.get(idx, 'horizontal') == 'vertical')
+        is_top = self.plot_newest_top.get(idx, False)
+        
+        self.chk_vertical.setChecked(is_vert)
+        self.chk_newest_top.setChecked(is_top)
+        self.chk_newest_top.setEnabled(is_vert)
+        
+        self.chk_vertical.blockSignals(False)
+        self.chk_newest_top.blockSignals(False)
+        
         vars_for = self.plot_variables.get(idx, [])
         self._set_checked_vars(vars_for)
+
+    def _on_vertical_changed(self, state: int):
+        idx = self.plot_selector.currentIndex()
+        if idx < 0:
+            return
+            
+        is_vert = self.chk_vertical.isChecked()
+        is_top = self.chk_newest_top.isChecked()
+        
+        self.chk_newest_top.setEnabled(is_vert)
+        orientation = 'vertical' if is_vert else 'horizontal'
+        
+        changed = False
+        if self.plot_orientations.get(idx, 'horizontal') != orientation:
+            self.plot_orientations[idx] = orientation
+            changed = True
+            
+        if self.plot_newest_top.get(idx, False) != is_top:
+            self.plot_newest_top[idx] = is_top
+            changed = True
+            
+        if changed:
+            self.update_plot(idx)
 
     # ── Auto-refresh ──────────────────────────────────────────
     def _toggle_autorefresh(self, state: int):
@@ -464,7 +602,14 @@ class MainWindow(QMainWindow):
         if plot_idx >= len(self.canvas.plots):
             return
 
-        pw = self.canvas.plots[plot_idx]
+        orientation = self.plot_orientations.get(plot_idx, 'horizontal')
+        is_top = self.plot_newest_top.get(plot_idx, False)
+        # Invert Y is True by default for vertical plots (newest on bottom). 
+        # If user wants newest on top, we don't invert y (so it uses normal Cartesian, top=large epoch=new).
+        invert_y = not is_top
+        
+        pw = self.canvas.update_plot_widget(plot_idx, orientation, invert_y)
+        
         varlist = self.plot_variables.get(plot_idx, [])
 
         if not varlist:

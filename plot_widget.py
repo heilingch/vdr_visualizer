@@ -50,29 +50,7 @@ def get_unit(variable_name: str) -> str:
     return VARIABLE_UNITS.get(variable_name, '')
 
 
-# ── Dark-theme colour palette ────────────────────────────────
-# Bright, high-contrast colours that pop on dark backgrounds
-PLOT_COLORS = [
-    '#00D4FF',  # cyan
-    '#FF6B6B',  # coral red
-    '#51CF66',  # green
-    '#FFD43B',  # yellow
-    '#CC5DE8',  # violet
-    '#FF922B',  # orange
-    '#20C997',  # teal
-    '#F06595',  # pink
-    '#74C0FC',  # light blue
-    '#A9E34B',  # lime
-]
-
-# Dark background colours
-BG_DARK = '#1a1a2e'
-BG_PLOT = '#16213e'
-FG_TEXT = '#e0e0e0'
-FG_DIM = '#888'
-GRID_COLOR = (60, 60, 90, 100)
-CROSSHAIR_COLOR = '#aaa'
-
+from theme import get_theme, Theme
 
 class TimeAxisItem(pg.AxisItem):
     """Custom axis that converts UNIX timestamps to readable time strings."""
@@ -91,11 +69,14 @@ class PlotWidget(QWidget):
     A single interactive plot with crosshair, value readout, and unit display.
     Dark themed for sailing / night use.
     """
-    crosshair_moved = Signal(float)  # emits x-position for cross-plot sync
+    crosshair_moved = Signal(float)  # emits epoch time for cross-plot sync
 
-    def __init__(self, parent=None):
+    def __init__(self, theme: Theme, orientation: str = 'horizontal', invert_y: bool = True, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"background: {BG_DARK};")
+        self.theme = theme
+        self.orientation = orientation
+        self.invert_y = invert_y
+        self.setStyleSheet(f"background: {self.theme.bg_app};")
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(2, 2, 2, 2)
@@ -108,13 +89,16 @@ class PlotWidget(QWidget):
         # Title label
         self.title_label = QLabel("No data")
         self.title_label.setStyleSheet(
-            f"font-weight: bold; padding: 3px 6px; color: {FG_TEXT}; "
-            f"background: {BG_DARK}; font-size: 12px;"
+            f"font-weight: bold; padding: 3px 6px; color: {self.theme.fg_text}; "
+            f"background: {self.theme.bg_app}; font-size: 12px;"
         )
         header_layout.addWidget(self.title_label)
         
         # Zoom to Fit buttons
-        btn_style = f"background: #0f3460; color: {FG_TEXT}; border: 1px solid #2a4a7f; border-radius: 2px; font-size: 10px;"
+        btn_style = (
+            f"background: {self.theme.bg_plot}; color: {self.theme.fg_text}; "
+            f"border: 1px solid {self.theme.fg_dim}; border-radius: 2px; font-size: 10px;"
+        )
         
         self.btn_fit_x = QPushButton("⛶ Fit X")
         self.btn_fit_x.setFixedSize(50, 20)
@@ -137,31 +121,46 @@ class PlotWidget(QWidget):
         header_layout.addStretch()
         self._main_layout.addLayout(header_layout)
 
-        # pyqtgraph plot with time axis (dark themed)
-        self.time_axis = TimeAxisItem(orientation='bottom')
-        self.pg_widget = pg.PlotWidget(axisItems={'bottom': self.time_axis})
-        self.pg_widget.setBackground(BG_PLOT)
+        # pyqtgraph plot with time axis
+        if self.orientation == 'vertical':
+            self.time_axis = TimeAxisItem(orientation='left')
+            self.pg_widget = pg.PlotWidget(axisItems={'left': self.time_axis})
+            self.pg_widget.setBackground(self.theme.bg_plot)
+            if self.invert_y:
+                self.pg_widget.getPlotItem().invertY(True)
+        else:
+            self.time_axis = TimeAxisItem(orientation='bottom')
+            self.pg_widget = pg.PlotWidget(axisItems={'bottom': self.time_axis})
+            self.pg_widget.setBackground(self.theme.bg_plot)
+        
+        # Grid settings
         self.pg_widget.showGrid(x=True, y=True, alpha=0.2)
+        grid_alpha = 1.0 if len(self.theme.grid) == 3 else self.theme.grid[3] / 255.0
+        r, g, b = self.theme.grid[:3]
+        pen_grid = pg.mkPen(color=(r, g, b), width=1)
+        self.pg_widget.getAxis('bottom').setGrid(grid_alpha * 255)
+        self.pg_widget.getAxis('left').setGrid(grid_alpha * 255)
+        
         self.pg_widget.setMouseEnabled(x=True, y=True)
         self.pg_widget.getPlotItem().setContentsMargins(0, 0, 0, 0)
 
-        # Style axes for dark theme
+        # Style axes
         for axis_name in ('left', 'bottom'):
             ax = self.pg_widget.getAxis(axis_name)
-            ax.setTextPen(pg.mkPen(FG_TEXT))
-            ax.setPen(pg.mkPen(FG_DIM))
+            ax.setTextPen(pg.mkPen(self.theme.fg_text))
+            ax.setPen(pg.mkPen(self.theme.fg_dim))
 
         # Legend
         self.legend = self.pg_widget.addLegend(
             offset=(10, 10),
             labelTextSize='9pt',
-            labelTextColor=FG_TEXT,
-            brush=pg.mkBrush(QColor(26, 26, 46, 200)),
-            pen=pg.mkPen(FG_DIM),
+            labelTextColor=self.theme.fg_text,
+            brush=pg.mkBrush(QColor(self.theme.bg_app)),
+            pen=pg.mkPen(self.theme.fg_dim),
         )
 
         # Crosshair lines
-        pen_cross = pg.mkPen(CROSSHAIR_COLOR, width=1,
+        pen_cross = pg.mkPen(self.theme.crosshair, width=1,
                              style=Qt.PenStyle.DashLine)
         self.vLine = pg.InfiniteLine(angle=90, movable=False, pen=pen_cross)
         self.hLine = pg.InfiniteLine(angle=0, movable=False, pen=pen_cross)
@@ -175,10 +174,10 @@ class PlotWidget(QWidget):
         # ── Value readout bar below the plot ──
         self.value_label = QLabel("")
         self.value_label.setStyleSheet(
-            f"background: #0f3460; padding: 4px 8px; "
+            f"background: {self.theme.bg_plot}; padding: 4px 8px; "
             f"font-family: 'Monospace', 'Consolas', monospace; "
-            f"font-size: 11px; color: #00D4FF; "
-            f"border-top: 1px solid #2a4a7f; min-height: 18px;"
+            f"font-size: 11px; color: {self.theme.fg_text}; "
+            f"border-top: 1px solid {self.theme.fg_dim}; min-height: 18px;"
         )
         self.value_label.setTextFormat(Qt.TextFormat.RichText)
         self._main_layout.addWidget(self.value_label)
@@ -206,22 +205,29 @@ class PlotWidget(QWidget):
             self.vLine.show()
             self.hLine.show()
             self._is_source = True
-            self._update_value_readout(x)
-            self.crosshair_moved.emit(x)
+            
+            epoch_time = y if self.orientation == 'vertical' else x
+            self._update_value_readout(epoch_time)
+            self.crosshair_moved.emit(epoch_time)
         else:
             self.vLine.hide()
             self.hLine.hide()
             self._is_source = False
             self.value_label.setText("")
 
-    def set_sync_x(self, x_val):
-        """Called from other plots to sync crosshair position + values."""
-        self.vLine.setPos(x_val)
-        self.vLine.show()
-        # Don't show hLine on synced plots (it's only meaningful on source)
-        self.hLine.hide()
+    def set_sync_time(self, epoch_time):
+        """Called from other plots to sync crosshair position + values using epoch time."""
+        if self.orientation == 'vertical':
+            self.hLine.setPos(epoch_time)
+            self.hLine.show()
+            self.vLine.hide()
+        else:
+            self.vLine.setPos(epoch_time)
+            self.vLine.show()
+            self.hLine.hide()
+            
         self._is_source = False
-        self._update_value_readout(x_val)
+        self._update_value_readout(epoch_time)
 
     def _auto_range(self):
         """Reset the plot view to fit all data."""
@@ -262,14 +268,34 @@ class PlotWidget(QWidget):
         cols = list(self.curves.keys())
         try:
             idx = cols.index(col_name)
-            return PLOT_COLORS[idx % len(PLOT_COLORS)]
+            return self.theme.curves[idx % len(self.theme.curves)]
         except ValueError:
-            return FG_TEXT
+            return self.theme.fg_text
+
+    def _update_views(self):
+        """Scale the overlaying ViewBox to match the primary PlotItem."""
+        if hasattr(self, 'vb2'):
+            self.vb2.setGeometry(self.pg_widget.getPlotItem().vb.sceneBoundingRect())
+            if self.orientation == 'vertical':
+                self.vb2.linkedViewChanged(self.pg_widget.getPlotItem().vb, self.vb2.YAxis)
+            else:
+                self.vb2.linkedViewChanged(self.pg_widget.getPlotItem().vb, self.vb2.XAxis)
 
     # ── Plotting ──────────────────────────────────────────────
     def plot_data(self, df):
-        """Plot a pandas DataFrame with DatetimeIndex."""
+        """Plot a pandas DataFrame with DatetimeIndex. Uses multiple Y axes if units mismatch."""
         self.pg_widget.clear()
+        
+        # Clean up any existing second Y-axis
+        if hasattr(self, 'vb2'):
+            p = self.pg_widget.getPlotItem()
+            p.scene().removeItem(self.vb2)
+            if self.orientation == 'vertical':
+                p.hideAxis('top')
+            else:
+                p.hideAxis('right')
+            del self.vb2
+            
         self.curves.clear()
         self.legend.clear()
 
@@ -285,32 +311,91 @@ class PlotWidget(QWidget):
 
         self._x_data = _dt_index_to_epoch(df.index)
 
-        # Build Y-axis label with units
-        y_labels = []
-        for i, col in enumerate(df.columns):
-            col_data = df[[col]].dropna()
-            if col_data.empty:
-                continue
+        # Categorize columns by their unit type
+        unit_groups = {}
+        for col in df.columns:
+            u = get_unit(col)
+            unit_groups.setdefault(u, []).append(col)
+            
+        # Determine primary and secondary units
+        primary_unit = None
+        secondary_unit = None
+        
+        sorted_units = sorted(unit_groups.items(), key=lambda x: len(x[1]), reverse=True)
+        if sorted_units:
+            primary_unit = sorted_units[0][0]
+        if len(sorted_units) > 1:
+            secondary_unit = sorted_units[1][0]
+            # Setup secondary axis for secondary units
+            p = self.pg_widget.getPlotItem()
+            self.vb2 = pg.ViewBox()
+            
+            if self.orientation == 'vertical':
+                p.showAxis('top')
+                p.scene().addItem(self.vb2)
+                p.getAxis('top').linkToView(self.vb2)
+                self.vb2.setYLink(p)
+                ax_sec = p.getAxis('top')
+            else:
+                p.showAxis('right')
+                p.scene().addItem(self.vb2)
+                p.getAxis('right').linkToView(self.vb2)
+                self.vb2.setXLink(p)
+                ax_sec = p.getAxis('right')
+            
+            # Style secondary axis
+            ax_sec.setTextPen(pg.mkPen(self.theme.fg_text))
+            ax_sec.setPen(pg.mkPen(self.theme.fg_dim))
+            
+            p.vb.sigResized.connect(self._update_views)
 
-            x = _dt_index_to_epoch(col_data.index)
-            y = col_data[col].values
-            color = PLOT_COLORS[i % len(PLOT_COLORS)]
+        y_labels_primary = []
+        y_labels_secondary = []
+        
+        col_idx = 0
+        for unit, cols in sorted_units:
+            for col in cols:
+                col_data = df[[col]].dropna()
+                if col_data.empty:
+                    col_idx += 1
+                    continue
 
-            unit = get_unit(col)
-            label_str = f"{col} [{unit}]" if unit else col
+                x = _dt_index_to_epoch(col_data.index)
+                y = col_data[col].values
+                color = self.theme.curves[col_idx % len(self.theme.curves)]
 
-            curve = self.pg_widget.plot(
-                x=x, y=y,
-                pen=pg.mkPen(color, width=2),
-                name=label_str,
-            )
-            self.curves[col] = curve
-            y_labels.append(label_str)
+                label_str = f"{col} [{unit}]" if unit else col
+                
+                # Swap X and Y for vertical orientation
+                plot_x = y if self.orientation == 'vertical' else x
+                plot_y = x if self.orientation == 'vertical' else y
 
-        # Set Y-axis label showing all plotted variables with units
-        if y_labels:
-            self.pg_widget.setLabel('left', ' / '.join(y_labels),
-                                    color=FG_TEXT)
+                if unit == secondary_unit and hasattr(self, 'vb2'):
+                    # Plot to secondary axis
+                    curve = pg.PlotDataItem(x=plot_x, y=plot_y, pen=pg.mkPen(color, width=2), name=label_str)
+                    self.vb2.addItem(curve)
+                    y_labels_secondary.append(label_str)
+                else:
+                    # Plot to primary axis
+                    curve = self.pg_widget.plot(
+                        x=plot_x, y=plot_y,
+                        pen=pg.mkPen(color, width=2),
+                        name=label_str,
+                    )
+                    y_labels_primary.append(label_str)
+                    
+                self.curves[col] = curve
+                col_idx += 1
+
+        if y_labels_primary:
+            axis_name = 'bottom' if self.orientation == 'vertical' else 'left'
+            self.pg_widget.setLabel(axis_name, ' / '.join(y_labels_primary), color=self.theme.fg_text)
+        if y_labels_secondary:
+            axis_name = 'top' if self.orientation == 'vertical' else 'right'
+            self.pg_widget.setLabel(axis_name, ' / '.join(y_labels_secondary), color=self.theme.fg_text)
+        
+        if hasattr(self, 'vb2'):
+            self._update_views()
 
 
 class PlotCanvas(QWidget):
@@ -318,12 +403,22 @@ class PlotCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(f"background: {BG_DARK};")
+        self.theme = get_theme("Dark")
+        self.setStyleSheet(f"background: {self.theme.bg_app};")
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(2, 2, 2, 2)
         self._grid.setSpacing(3)
         self.plots: List[PlotWidget] = []
+        self._rows = 1
+        self._cols = 1
         self.set_grid_layout(1, 1)
+
+    def set_theme(self, theme: Theme):
+        """Update the theme for the canvas and all child plots."""
+        self.theme = theme
+        self.setStyleSheet(f"background: {self.theme.bg_app};")
+        # Rebuild grid to easily apply new theme colors
+        self.set_grid_layout(self._rows, self._cols)
 
     def set_grid_layout(self, rows: int, cols: int):
         # Disconnect old signals and remove widgets
@@ -341,23 +436,55 @@ class PlotCanvas(QWidget):
 
         self.plots.clear()
 
+        self._rows = rows
+        self._cols = cols
+
         for r in range(rows):
             for c in range(cols):
-                pw = PlotWidget()
+                pw = PlotWidget(theme=self.theme)
                 self.plots.append(pw)
                 self._grid.addWidget(pw, r, c)
 
         self._sync_axes()
 
     def _sync_axes(self):
-        """Link X-axes and crosshair positions across all plots."""
-        if len(self.plots) > 1:
-            base = self.plots[0].pg_widget
-            for pw in self.plots[1:]:
-                pw.pg_widget.setXLink(base)
+        """Link Time axes and crosshair positions across all plots."""
+        # We manually link X to X for horizontal and Y to Y for vertical, or mixed.
+        # But `setXLink` is limited. Actually crosshair syncing handles values perfectly now!
+        # For pan/zoom syncing, we can rely on manual ViewBox linking if needed, but omitted for simplicity
+        # if orientations are mixed. We'll leave the sync mostly for crosshairs.
 
         # Cross-plot crosshair sync
         for i, src in enumerate(self.plots):
             for j, dst in enumerate(self.plots):
                 if i != j:
-                    src.crosshair_moved.connect(dst.set_sync_x)
+                    src.crosshair_moved.connect(dst.set_sync_time)
+
+    def update_plot_widget(self, idx: int, orientation: str, invert_y: bool = True) -> PlotWidget:
+        """Replace a PlotWidget in the grid if its orientation needs changing."""
+        old_pw = self.plots[idx]
+        if getattr(old_pw, 'orientation', 'horizontal') == orientation and getattr(old_pw, 'invert_y', True) == invert_y:
+            return old_pw
+
+        # Recreate the PlotWidget
+        r = idx // self._cols
+        c = idx % self._cols
+        
+        new_pw = PlotWidget(theme=self.theme, orientation=orientation, invert_y=invert_y)
+        
+        # Unlink signals from old
+        try:
+            old_pw.crosshair_moved.disconnect()
+        except Exception:
+            pass
+            
+        self._grid.removeWidget(old_pw)
+        old_pw.setParent(None)
+        old_pw.deleteLater()
+        
+        self.plots[idx] = new_pw
+        self._grid.addWidget(new_pw, r, c)
+        
+        # Link up the crosshair syncs again
+        self._sync_axes()
+        return new_pw
